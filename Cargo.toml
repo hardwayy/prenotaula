@@ -1,0 +1,23 @@
+[package]
+name = "planner"
+version = "0.1.0"
+edition = "2021" # O "2024" se stai usando una toolchain Rust che lo supporta stabilmente
+
+[dependencies]
+rocket = { version = "0.5.0", features = ["json"] } # Assicurati che sia la 0.5.0 o una patch successiva compatibile
+serde = { version = "1.0", features = ["derive"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] } # Rocket 0.5 usa Tokio
+
+# Per la connessione al database MySQL
+sqlx = { version = "0.7.4", features = ["runtime-tokio-rustls", "mysql", "macros", "chrono", "json"] }
+
+# Per la gestione di JWT (JSON Web Tokens) per l'autenticazione
+jsonwebtoken = "8"
+chrono = { version = "0.4", features = ["serde"] } # Per la gestione di date/ore e scadenze JWT
+
+# Per l'hashing delle password
+argon2 = "0.5"
+rand = "0.8" # Utile con argon2 per generare il sale
+
+# Per gestire CORS (Cross-Origin Resource Sharing) durante lo sviluppo
+rocket_cors = "0.6.0-alpha3" # Controlla l'ultima versione compatibile con Rocket 0.5

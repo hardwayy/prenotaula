@@ -1,0 +1,118 @@
+/* frontend/src/components/CustomFullCalendar.css */
+
+/* Contenitore principale di FullCalendar (se vuoi stilizzare il wrapper che hai in CalendarView.tsx) */
+/* .your-calendar-view-container-class .fc { */
+/* Esempio: se volessi un bordo specifico attorno a FullCalendar */
+/* border: 1px solid #ccc; */
+/* border-radius: 8px; */
+/* } */
+
+/* Header Toolbar */
+.fc .fc-toolbar.fc-header-toolbar {
+    margin-bottom: 1.5em;
+    padding: 10px 0; /* Più spazio verticale */
+}
+
+.fc .fc-toolbar-title {
+    font-size: 1.8em; /* Titolo del mese/settimana più grande */
+    color: #333;
+}
+
+.fc .fc-button { /* Stile generale per i pulsanti di FullCalendar */
+    background-color: #007bff;
+    border-color: #007bff;
+    color: white;
+    text-transform: capitalize; /* Rende "today" -> "Today" se non usi buttonText */
+    font-size: 0.9em; /* Leggermente più piccolo per adattarsi meglio */
+    padding: 0.5em 0.8em;
+    border-radius: 0.25rem;
+}
+
+.fc .fc-button:hover {
+    background-color: #0056b3;
+    border-color: #0056b3;
+}
+
+.fc .fc-button-primary:disabled {
+    background-color: #6c757d;
+    border-color: #6c757d;
+}
+
+/* Pulsante "today" */
+.fc .fc-today-button {
+    font-size: 0.9em;
+}
+
+/* Viste (dayGridMonth, timeGridWeek, ecc.) */
+.fc-view, .fc-view > table { /* Assicura che le viste usino l'altezza disponibile */
+    height: 100%;
+}
+
+/* Intestazioni dei giorni della settimana (Lun, Mar...) */
+.fc .fc-col-header-cell-cushion { /* Nuovo selettore per v5+ per il contenuto dell'header colonna */
+    padding: 10px 4px;
+    font-size: 0.95em;
+    font-weight: 600;
+    color: #495057;
+    text-decoration: none; /* Rimuove sottolineatura se i giorni sono link */
+}
+
+/* Numeri dei giorni */
+.fc .fc-daygrid-day-number {
+    padding: 8px; /* Più spazio attorno al numero del giorno */
+    font-size: 1em;
+    color: #333;
+    text-align: left; /* O center se preferisci */
+}
+
+.fc .fc-day-today .fc-daygrid-day-number { /* Numero del giorno "oggi" */
+    background-color: rgba(255, 224, 130, 0.3); /* Sfondo leggero per il numero di oggi */
+    border-radius: 50%;
+    display: inline-block;
+    width: 28px; /* Larghezza per il cerchio */
+    height: 28px; /* Altezza per il cerchio */
+    line-height: 28px; /* Centra il numero nel cerchio */
+    text-align: center;
+    font-weight: bold;
+}
+
+.fc .fc-daygrid-day-frame { /* Frame di ogni cella giorno */
+    min-height: 100px; /* Altezza minima per ogni cella giorno, adattala! */
+}
+
+/* Eventi */
+.fc-event { /* Stile generale per gli eventi */
+    border-radius: 4px;
+    padding: 3px 5px;
+    font-size: 0.85em;
+    cursor: pointer;
+    /* Colori di default se non specificati per evento */
+    /* background-color: #007bff;
+       border-color: #007bff; */
+}
+
+.fc-event-main { /* Contenuto principale dell'evento */
+    color: white;
+}
+
+.fc-event-title {
+    font-weight: 500;
+}
+
+/* Vista Lista */
+.fc-list-event-title a {
+    color: #007bff;
+    text-decoration: none;
+}
+.fc-list-event-title a:hover {
+    text-decoration: underline;
+}
+
+/* Indicatore "Now" nelle viste timeGrid */
+.fc .fc-timegrid-now-indicator-line {
+    border-color: red;
+    border-width: 2px;
+}
+.fc .fc-timegrid-now-indicator-arrow {
+    border-top-color: red;
+}
