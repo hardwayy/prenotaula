@@ -260,23 +260,27 @@ async fn login_professore(
             return Err(Json(json!({ "status": "errore", "message": "Errore interno del server (dati utente)." })));
         }
     };
-
-    let nome_completo = format!("{:?} {:?}", professor_details.Nome, professor_details.Cognome);
-
+    let nome_prof = professor_details.Nome.as_deref().unwrap_or_else(|| {
+        // Azione di fallback se Nome è NULL nel DB.
+        // Potresti restituire una stringa vuota, "N/D", o gestire l'errore.
+        // Per ora, usiamo una stringa vuota se è NULL, dato che Cognome è NOT NULL.
+        eprintln!("Attenzione: Nome del professore con ID {} è NULL nel database.", professor_id);
+        ""
+    });
+    let cognome_prof = &professor_details.Cognome; // Cognome è String (NOT NULL
+    let nome_completo = format!("{} {}", nome_prof, cognome_prof).trim().to_string();
     // 4. Genera il token JWT
     let now = Utc::now();
-    let expiration = now + Duration::days(7); // Token valido per 7 giorni (o la durata che preferisci)
+    let expiration = now + Duration::days(7);
 
     let claims = Claims {
-        sub: professor_id.to_string(), // Id_Professore come stringa nel subject del token
-        name: nome_completo.clone(),   // Nome completo per comodità (es. da mostrare nel frontend)
+        sub: professor_id.to_string(),
+        name: nome_completo.clone(),
         exp: expiration.timestamp() as usize,
     };
 
-    // ATTENZIONE: Carica la tua chiave segreta JWT da una variabile d'ambiente o file di config!
-    // NON hardcodarla qui per produzione.
     let jwt_secret = std::env::var("JWT_SECRET")
-        .unwrap_or_else(|_| "LA_TUA_CHIAVE_SEGRETA_DEFAULT_PER_SVILUPPO_MOLTO_LUNGA_E_SICURA".to_string());
+        .expect("Not present");
 
     let token = match encode(&Header::default(), &claims, &EncodingKey::from_secret(jwt_secret.as_ref())) {
         Ok(t) => t,
@@ -286,7 +290,6 @@ async fn login_professore(
         }
     };
 
-    // 5. Restituisci la risposta di successo con il token e i dati dell'utente
     Ok(Json(LoginSuccessResponse {
         message: "Login effettuato con successo!".to_string(),
         token,
@@ -294,25 +297,24 @@ async fn login_professore(
         user_name: nome_completo,
     }))
 }
-#[get("/<path..>", rank = 10)] // Manteniamo il rank per coerenza con la catch-all
+#[get("/<path..>", rank = 10)]
 async fn frontend_catch_all(path: PathBuf) -> Option<NamedFile> {
-    println!("Catch-all (NamedFile) per path: {:?}", path); // Opzionale, per vedere cosa cattura e usare 'path'
+    println!("Catch-all (NamedFile) per path: {:?}", path);
     // Assicurati che questo percorso sia corretto!
     NamedFile::open(Path::new("frontend/dist/index.html")).await.ok()
 }
 #[get("/aulas")]
 async fn get_aule(
     db_pool: &State<MySqlPool>
-) -> Result<Json<Vec<models::AulaApi>>, Json<JsonValue>> { // Deve restituire Vec<AulaApi>
+) -> Result<Json<Vec<models::AulaApi>>, Json<JsonValue>> {
     match sqlx::query_as!(
-        models::AulaApi, // Usa la struct definita sopra
+        models::AulaApi,
         "SELECT Id_Aula, Tipo_Aula, Numero FROM aula ORDER BY Tipo_Aula, Numero"
-        // Se hai aggiunto Nome_Aula: "SELECT Id_Aula, Tipo_Aula, Numero, Nome_Aula FROM aula ..."
     )
         .fetch_all(db_pool.inner())
         .await
     {
-        Ok(aule) => Ok(Json(aule)), // Restituisce direttamente il Vec<AulaApi>
+        Ok(aule) => Ok(Json(aule)),
         Err(e) => {
             eprintln!("Errore nel recuperare le aule dal DB: {}", e);
             Err(Json(json!({ "status": "errore", "message": "Impossibile caricare l'elenco delle aule." })))
@@ -320,38 +322,34 @@ async fn get_aule(
     }
 }
 #[launch]
-async fn rocket() -> _ { // Aggiunto async perché MySqlPool::connect è async
-    // 1. Definisci il tuo DATABASE_URL
-    //    È meglio caricarlo da variabili d'ambiente o da un file .env per sicurezza
-    let password_da_hashare = "ciao"; // La tua password
+async fn rocket() -> _ {
+    match dotenvy::dotenv() {
+        Ok(path) => println!("Variabili d'ambiente caricate da: {:?}", path),
+        Err(e) => eprintln!(" Errore nel caricare il file .env: {:?}. Le variabili d'ambiente potrebbero non essere impostate.", e),
+    }
+    let password_da_hashare = "ciao";
     let password_bytes = password_da_hashare.as_bytes();
 
     // Genera un sale casuale
     let salt = SaltString::generate(&mut OsRng);
 
-    // Crea un'istanza di Argon2 con i parametri di default
     let argon2 = Argon2::default();
 
-    // Hasha la password
     match argon2.hash_password(password_bytes, &salt) {
         Ok(password_hash_object) => {
             let password_hash_string = password_hash_object.to_string();
             println!("Password originale: {}", password_da_hashare);
             println!("Hash da memorizzare nel database: {}", password_hash_string);
-            // Esempio di output: Hash da memorizzare nel database: $argon2id$v=19$m=65536,t=3,p=4$tuo_sale_generato$tuo_hash_generato
         }
         Err(e) => {
             eprintln!("Errore durante l'hashing della password: {}", e);
         }
     }
     let database_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| {
-            // Fornisci un URL di default per lo sviluppo se vuoi, ma avvisa
-            println!("ATTENZIONE: DATABASE_URL non impostata, uso default per sviluppo!");
-            "mysql://admin:admin@localhost:3306/planner".to_string()
-        });
+        .expect(
+            "Link database incorretto"
+        );
 
-    // 2. Crea il pool di connessioni SQLx
     let db_pool = match MySqlPool::connect(&database_url).await {
         Ok(pool) => {
             println!("✅ Connessione al database stabilita con successo!");
@@ -359,14 +357,11 @@ async fn rocket() -> _ { // Aggiunto async perché MySqlPool::connect è async
         }
         Err(e) => {
             eprintln!("❌ Impossibile connettersi al database: {:?}", e);
-            // In un'applicazione reale, potresti voler terminare o gestire l'errore diversamente
-            // Per ora, terminiamo se non possiamo connetterci.
+
             std::process::exit(1);
         }
     };
 
-    // La funzione configure_cors() deve essere definita come nelle risposte precedenti
-    // o il fairing CORS creato direttamente qui.
     let cors = rocket_cors::CorsOptions::default()
         .allowed_origins(rocket_cors::AllowedOrigins::some_regex(&[
             r"^http://localhost:[\d]+$",
@@ -384,15 +379,15 @@ async fn rocket() -> _ { // Aggiunto async perché MySqlPool::connect è async
 
 
     rocket::build()
-        .manage(db_pool) // <--- ECCO IL PASSAGGIO FONDAMENTALE!
+        .manage(db_pool) 
         .attach(cors)
         .mount("/api", routes![
-            hello_api, // Assicurati che questa route sia definita
-            login_professore, // E anche questa, e che ora possa usare &State<MySqlPool>
+            hello_api, 
+            login_professore,
             get_prenotazioni,
             creare_prenotazione,
             get_aule
         ])
-        .mount("/", FileServer::from("frontend/dist").rank(5)) // Assicurati che il percorso sia corretto
-        .mount("/", routes![frontend_catch_all]) // Assicurati che questa route sia definita
+        .mount("/", FileServer::from("frontend/dist").rank(5)) 
+        .mount("/", routes![frontend_catch_all])
 }
