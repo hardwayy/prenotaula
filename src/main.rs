@@ -1,11 +1,7 @@
-
-// main.rs
+mod models;
 #[macro_use]
 extern crate rocket;
-
 use rocket::fs::{FileServer, NamedFile};
-// Rimuovi questa linea se configure_cors è definita nello stesso file o se usi la struct direttamente
-// use rocket_cors::{AllowedOrigins, CorsOptions, Cors}; // Potrebbe dare errore se non hai il crate o la funzione
 use std::path::{Path, PathBuf};
 use argon2::{
     password_hash::{
@@ -14,52 +10,27 @@ use argon2::{
     },
     Argon2
 };
-
-// Import da Rocket
+use chrono_tz::Europe::Rome;
 use rocket::State;
 use rocket::serde::json::{Json, Value as JsonValue, json}; // json! macro per risposte d'errore
-
-// Import da Serde per serializzazione/deserializzazione
 use rocket::serde::{Deserialize, Serialize}; // Rocket riesporta Serialize/Deserialize da Serde
-
-// Import da SQLx (specifico per MySQL e il runtime che hai scelto, es. Tokio)
 use sqlx::mysql::MySqlPool; // O MySqlPoolOptions, se configuri il pool manualmente
-
-// Import per l'hashing delle password con Argon2
 use argon2::{password_hash::{
     PasswordHash, PasswordVerifier // SaltString e PasswordHasher sarebbero per generare l'hash
 },};
-
-// Se devi generare il sale per creare nuovi hash (non strettamente per il login, ma per la registrazione/set password):
-// use argon2::password_hash::rand_core::OsRng;
-// use argon2::password_hash::SaltString;
-// use argon2::PasswordHasher;
-
-
-// Import per JWT (JSON Web Tokens)
 use jsonwebtoken::{encode, Header, EncodingKey}; // decode e DecodingKey sarebbero per verificare i token
-use chrono::{Utc, Duration}; // Per gestire le date e le scadenze dei token
-
-// (Opzionale) Per la gestione dei percorsi se hai altre route che ne fanno uso
-// use std::path::{Path, PathBuf};
-// use rocket::fs::NamedFile;
-// ------------ INIZIO SEZIONE DA VERIFICARE/DEFINIRE DA TE -----------
-// Assicurati che queste funzioni e struct siano definite nel tuo codice
+use chrono::{Utc, Duration, DateTime, TimeZone}; // Per gestire le date e le scadenze dei token
 #[derive(serde::Serialize)]
 #[serde(crate = "rocket::serde")]
 struct ApiResponse {
     message: String,
 }
-
 #[get("/hello")]
 fn hello_api() -> rocket::serde::json::Json<ApiResponse> {
     rocket::serde::json::Json(ApiResponse {
         message: "Ciao dal backend Rocket!".to_string(),
     })
 }
-
-// Devi avere una funzione configure_cors() se la chiami in .attach()
-// O definisci il Cors fairing direttamente
 fn configure_cors() -> rocket_cors::Cors {
     let allowed_origins = rocket_cors::AllowedOrigins::some_regex(&[
         r"^http://localhost:[\d]+$",
@@ -80,7 +51,83 @@ struct LoginCredentials<'r> {
     email: &'r str,
     password: &'r str,
 }
+#[get("/prenotazioni")]
+async fn get_prenotazioni(
+    db_pool: &State<MySqlPool>
+) -> Result<Json<Vec<models::CalendarEventApi>>, Json<JsonValue>> {
 
+    // FullCalendar potrebbe inviare parametri start e end per filtrare la vista corrente.
+    // Per ora, recuperiamo tutte le prenotazioni.
+    // TODO: In futuro, potresti voler accettare parametri query ?start=...&end=...
+    //       per caricare solo gli eventi visibili nel range del calendario.
+
+    let query_result = sqlx::query_as!(
+        models::PrenotazioneDb, // La struct che mappa il risultato della query
+        r#"
+        SELECT
+            p.Id_Prenotazione,
+            p.Data_Inizio,
+            p.Data_Fine,
+            a.Tipo_Aula,
+            a.Numero AS Numero_Aula,
+            pr.Nome AS Nome_Professore,
+            pr.Cognome AS Cognome_Professore
+        FROM
+            prenotazione p
+        JOIN
+            aula a ON p.Id_Aula = a.Id_Aula
+        JOIN
+            professore pr ON p.Id_Professore = pr.Id_Professore
+        ORDER BY p.Data_Inizio ASC
+        "#
+        // Se avessi parametri: , start_date_param, end_date_param
+    )
+        .fetch_all(db_pool.inner())
+        .await;
+
+    match query_result {
+        Ok(prenotazioni_db) => {
+            let calendar_events: Vec<models::CalendarEventApi> = prenotazioni_db
+                .into_iter()
+                .map(|p_db| {
+                    // Costruisci il titolo dell'evento
+                    let nome_aula_completo = format!("Aula {} {:02}", p_db.Tipo_Aula, p_db.Numero_Aula); // Es. "Aula A 01"
+                    let nome_prof_completo = format!("{} {}",
+                                                     p_db.Nome_Professore.as_deref().unwrap_or("N/D"), // Gestisce Nome NULL
+                                                     p_db.Cognome_Professore
+                    );
+                    let local_data_inizio = Rome.from_local_datetime(&p_db.Data_Inizio).unwrap();
+                    let local_data_fine = Rome.from_local_datetime(&p_db.Data_Fine).unwrap();
+                    // .unwrap() qui è per semplicità; in produzione dovresti gestire il caso ambiguo o non esistente.
+
+                    // PASSO 2: Converti l'orario locale in UTC
+                    let data_inizio_utc: DateTime<Utc> = local_data_inizio.with_timezone(&Utc);
+                    let data_fine_utc: DateTime<Utc> = local_data_fine.with_timezone(&Utc);
+                    models::CalendarEventApi {
+                        id: p_db.Id_Prenotazione.to_string(),
+                        title: format!("{} - {}", nome_aula_completo, nome_prof_completo),
+                        // Formatta le date in stringhe ISO 8601
+                        // DateTime<Utc>.to_rfc3339() produce il formato corretto con 'Z' per UTC.
+                        // Se sqlx restituisce NaiveDateTime, converti prima a DateTime<Utc>.
+                        // Esempio se p_db.Data_Inizio è NaiveDateTime:
+                        start: data_inizio_utc.to_rfc3339_opts(chrono::SecondsFormat::Secs, true), // Invia UTC con 'Z'
+                        end: data_fine_utc.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),   // Invia UTC con 'Z'
+
+                        allDay: false, // Assumiamo che le tue prenotazioni abbiano sempre un orario.
+                        // Potresti derivarlo se Data_Inizio e Data_Fine coprono un giorno intero
+                        // o se hai un campo specifico nel DB.
+                    }
+                })
+                .collect();
+
+            Ok(Json(calendar_events))
+        }
+        Err(e) => {
+            eprintln!("Errore nel recuperare le prenotazioni dal DB: {}", e);
+            Err(Json(json!({ "status": "errore", "message": "Impossibile caricare le prenotazioni." })))
+        }
+    }
+}
 #[derive(Debug, Serialize)]
 #[serde(crate = "rocket::serde")]
 struct LoginSuccessResponse {
@@ -271,7 +318,8 @@ async fn rocket() -> _ { // Aggiunto async perché MySqlPool::connect è async
         .attach(cors)
         .mount("/api", routes![
             hello_api, // Assicurati che questa route sia definita
-            login_professore // E anche questa, e che ora possa usare &State<MySqlPool>
+            login_professore, // E anche questa, e che ora possa usare &State<MySqlPool>
+            get_prenotazioni
         ])
         .mount("/", FileServer::from("frontend/dist").rank(5)) // Assicurati che il percorso sia corretto
         .mount("/", routes![frontend_catch_all]) // Assicurati che questa route sia definita

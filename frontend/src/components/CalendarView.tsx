@@ -3,107 +3,159 @@ import React, { useState, useEffect, useCallback } from 'react';
 import FullCalendar from '@fullcalendar/react';
 import dayGridPlugin from '@fullcalendar/daygrid';
 import timeGridPlugin from '@fullcalendar/timegrid';
-import interactionPlugin, {type DateClickArg } from '@fullcalendar/interaction'; // Per dateClick
-import listPlugin from '@fullcalendar/list'; // Per la vista a lista
-import itLocale from '@fullcalendar/core/locales/it'; // Importa la localizzazione italiana
+import interactionPlugin, { type DateClickArg } from '@fullcalendar/interaction';
+import listPlugin from '@fullcalendar/list';
+import itLocale from '@fullcalendar/core/locales/it';
+import { type EventClickArg, type EventInput } from '@fullcalendar/core'; // Importa EventInput per i nuovi eventi
+import axios from 'axios';
+// Import CSS (assicurati che i percorsi siano corretti per la tua versione di FullCalendar)
+// Esempio per v6+ (Vite spesso gestisce questo automaticamente se i pacchetti sono installati)
+// import '@fullcalendar/common/main.css'; // O '@fullcalendar/core/main.css'
+// import '@fullcalendar/daygrid/main.css';
+// import '@fullcalendar/timegrid/main.css';
+// import '@fullcalendar/list/main.css';
 
-// Importa i CSS di FullCalendar (molto importante!)
-// Questi sono per FullCalendar v5/v6. Controlla la documentazione se usi una versione diversa.
+import './CalendarView.css'; // I tuoi stili custom
 
-//import './CalendarView.css';
-
-// Interfaccia per gli eventi del calendario (le tue prenotazioni)
-interface CalendarEvent {
-    id: string; // o number, l'ID della prenotazione
-    title: string; // Es. "Aula A01 - Prof. Rossi" o "Laboratorio Info - Lezione TPSI"
-    start: string; // Formato ISO 8601: "2025-05-22T10:00:00"
-    end?: string;   // Formato ISO 8601: "2025-05-22T12:00:00" (opzionale se l'evento non ha durata)
-    allDay?: boolean; // Se l'evento dura tutto il giorno
-    // Puoi aggiungere altri campi custom qui (backgroundColor, borderColor, extendedProps, ecc.)
-    // backgroundColor?: string;
-    // borderColor?: string;
-    // extendedProps?: Record<string, any>;
+// L'interfaccia CalendarEvent rimane la stessa
+interface CalendarEvent extends EventInput { // Estende EventInput per compatibilità con FullCalendar
+    id: string; // FullCalendar usa id di tipo stringa
+    title: string;
+    start: string; // Formato YYYY-MM-DD o YYYY-MM-DDTHH:mm:ss
+    end?: string;
+    allDay?: boolean;
+    backgroundColor?: string;
+    borderColor?: string;
+    // Potresti aggiungere altri campi specifici dell'applicazione
+    // extendedProps?: {
+    //   professore?: string;
+    //   aula?: string;
+    //   // altri dettagli...
+    // };
 }
 
 const styles: { [key: string]: React.CSSProperties } = {
     calendarContainer: {
         width: '100%',
-        maxWidth: '1100px', // Puoi aggiustare la larghezza massima
-        margin: '0 auto',   // Per centrare se maxWidth è impostato
-        padding: '15px',    // Un po' di padding attorno al calendario
+        maxWidth: '1100px',
+        margin: '0 auto',
+        padding: '0px',
         backgroundColor: '#fff',
         borderRadius: '8px',
         boxShadow: '0 4px 15px rgba(0,0,0,0.08)',
-        height: 'calc(100vh - 60px - 40px - 40px)', // Esempio: altezza viewport - navbar - padding-top di mainContent - padding-bottom di mainContent
-        // Dovrai aggiustarla per farla entrare bene
-        minHeight: '600px', // Altezza minima
+        height: 'calc(100vh - 60px - 20px - 20px - 2px)', // Esempio di altezza
+        minHeight: '650px',
+        display: 'flex',
+        flexDirection: 'column',
     },
 };
 
 const CalendarView: React.FC = () => {
     const [events, setEvents] = useState<CalendarEvent[]>([]);
-    // const [selectedDateInfo, setSelectedDateInfo] = useState<DateClickArg | null>(null);
+    const [loadingError, setLoadingError] = useState<string | null>(null);
 
-    // TODO: Caricare le prenotazioni/eventi dal backend
+    // Funzione per caricare le prenotazioni dal backend
+    const fetchEvents = useCallback(async () => {
+        setLoadingError(null);
+        try {
+            const response = await axios.get<CalendarEvent[]>('http://localhost:8000/api/prenotazioni');
+             setEvents(response.data);
+
+            // Per ora, usiamo mock data per il debug degli handler
+            console.log("Caricamento eventi (usando mock data per ora)...");
+
+
+        } catch (error) {
+            console.error("Errore nel caricare le prenotazioni:", error);
+            setLoadingError('Impossibile caricare le prenotazioni dal server.');
+        }
+    }, []); // La dipendenza vuota significa che fetchEvents non cambia mai, quindi useEffect lo chiama solo una volta
+
     useEffect(() => {
-        // Simula il caricamento degli eventi
-        // In una vera applicazione, faresti una chiamata API al tuo backend Rust
-        // per recuperare le prenotazioni e mapparle nel formato CalendarEvent.
-        // Esempio: axios.get('/api/prenotazioni?start=...&end=...').then(response => setEvents(mapToCalendarEvents(response.data)));
-        const mockEvents: CalendarEvent[] = [
-            { id: '1', title: 'Lezione TPSI - Aula A01', start: '2025-05-22T10:00:00', end: '2025-05-22T12:00:00' },
-            { id: '2', title: 'Riunione Dipartimento - Aula Magna', start: '2025-05-23T14:00:00', end: '2025-05-23T15:30:00',  },
-            {
-                id: '3', title: 'Prenotazione Carrello PC01', allDay: true,
-                start: ''
-            } // Esempio evento tutto il giorno
-        ];
-        setEvents(mockEvents);
-    }, []);
+        fetchEvents();
+    }, [fetchEvents]); // Chiama fetchEvents quando il componente monta (e se fetchEvents cambiasse)
 
     // Gestore per quando si clicca su una data o uno slot temporale
     const handleDateClick = useCallback((clickInfo: DateClickArg) => {
-        // clickInfo.dateStr contiene la data/ora cliccata in formato ISO
-        // clickInfo.allDay indica se è stato cliccato uno slot "tutto il giorno"
-        alert('Data cliccata: ' + clickInfo.dateStr + '\nPotresti aprire un modale qui per creare una nuova prenotazione.');
-        // setSelectedDateInfo(clickInfo);
-        // Qui potresti aprire un modale per creare una nuova prenotazione per clickInfo.date
-    }, []);
+        const title = prompt('Inserisci il titolo per la nuova prenotazione:', 'Nuova Prenotazione');
+        if (title) {
+            const newEvent: CalendarEvent = {
+                id: String(Date.now()), // ID univoco temporaneo
+                title: title,
+                start: clickInfo.dateStr, // Data cliccata (se allDay) o data+ora
+                allDay: clickInfo.allDay,
+                // Potresti voler impostare un colore di default per i nuovi eventi
+                backgroundColor: '#6c757d', // Grigio
+                borderColor: '#6c757d'
+            };
+
+            setEvents(prevEvents => [...prevEvents, newEvent]);
+
+            alert(`Nuova prenotazione "${title}" aggiunta (solo localmente) per ${clickInfo.dateStr}.
+Dovresti inviare questo al backend per salvarlo nel database.`);
+            // TODO: Qui faresti una chiamata API POST al backend per creare la prenotazione
+            // Esempio:
+            // axios.post('/api/prenotazioni', { title: newEvent.title, start: newEvent.start, end: newEvent.end, allDay: newEvent.allDay, id_aula: ..., id_professore: ... })
+            //   .then(response => {
+            //     // Aggiorna l'evento con l'ID dal database o ricarica tutti gli eventi
+            //     console.log("Prenotazione salvata:", response.data);
+            //     fetchEvents(); // Ricarica gli eventi per includere quello nuovo dal DB
+            //   })
+            //   .catch(error => console.error("Errore nel salvare la prenotazione:", error));
+        }
+    }, [/* fetchEvents */]); // Rimuovi fetchEvents dalle dipendenze se non lo chiami qui dentro per evitare loop
+    // Se chiami fetchEvents, allora includilo.
 
     // Gestore per quando si clicca su un evento esistente
-    const handleEventClick = useCallback((clickInfo: any /* EventClickArg */) => {
-        alert('Evento cliccato: ' + clickInfo.event.title + '\nID Prenotazione: ' + clickInfo.event.id + '\nPotresti aprire un modale per visualizzare/modificare i dettagli.');
-        // clickInfo.event contiene l'oggetto evento
+    const handleEventClick = useCallback((clickInfo: EventClickArg) => {
+        const event = clickInfo.event;
+        const eventDetails = `
+      Titolo: ${event.title}
+      Inizio: ${event.start ? new Date(event.startStr).toLocaleString('it-IT') : 'N/A'}
+      Fine: ${event.end ? new Date(event.endStr).toLocaleString('it-IT') : 'N/A'}
+      Tutto il giorno: ${event.allDay ? 'Sì' : 'No'}
+      ID: ${event.id}
+    `;
+
+        if (confirm(`Dettagli Prenotazione:\n${eventDetails}\n\nVuoi eliminare questa prenotazione (solo visualizzazione locale)?`)) {
+            setEvents(prevEvents => prevEvents.filter(e => e.id !== event.id));
+            alert(`Prenotazione "${event.title}" rimossa (solo localmente).
+Dovresti inviare una richiesta DELETE al backend per eliminarla dal database.`);
+            // TODO: Qui faresti una chiamata API DELETE al backend
+            // Esempio:
+            // axios.delete(`/api/prenotazioni/${event.id}`)
+            //   .then(() => {
+            //     console.log("Prenotazione eliminata con successo dal DB");
+            //     // Non c'è bisogno di chiamare fetchEvents se l'hai già rimossa localmente,
+            //     // a meno che tu non voglia una conferma dal server.
+            //   })
+            //   .catch(error => console.error("Errore nell'eliminare la prenotazione:", error));
+        }
     }, []);
 
     return (
         <div style={styles.calendarContainer}>
+            {loadingError && <p style={{ color: 'red', textAlign: 'center' }}>{loadingError}</p>}
             <FullCalendar
                 plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin, listPlugin]}
-                initialView="dayGridMonth" // Vista iniziale
-                headerToolbar={{ // Configurazione dell'header
+                initialView="dayGridMonth"
+                headerToolbar={{
                     left: 'prev,next today',
                     center: 'title',
-                    right: 'dayGridMonth,timeGridWeek,timeGridDay,listWeek' // Opzioni di vista
+                    right: 'dayGridMonth,timeGridWeek,timeGridDay,listWeek'
                 }}
-                events={events} // Array di eventi da visualizzare
-                locale={itLocale} // Imposta la localizzazione italiana (nomi mesi, giorni, formato ora)
-                editable={true} // Permette il drag & drop e il resize degli eventi (se implementi gli handler)
-                selectable={true} // Permette di selezionare date/slot temporali
+                events={events}
+                locale={itLocale}
+                editable={true} // Permette il drag-and-drop e il resize (se gestiti)
+                selectable={true} // Permette la selezione di date/slot
                 selectMirror={true}
-                dayMaxEvents={true} // Mostra "+more" se ci sono troppi eventi in un giorno
-                weekends={true} // Mostra i weekend
-                dateClick={handleDateClick} // Chiamata quando si clicca su una data/ora
-                eventClick={handleEventClick} // Chiamata quando si clicca su un evento
-                // eventDrop={(info) => alert(info.event.title + " è stato spostato.")} // Esempio per drag & drop
-                // eventResize={(info) => alert(info.event.title + " è stato ridimensionato.")} // Esempio per resize
-
-                // Per l'altezza, FullCalendar ha diverse opzioni:
-                height="100%" // Prova a fargli occupare l'altezza del contenitore (calendarContainer)
-                // contentHeight="auto"
-                // aspectRatio={1.8} // Oppure usa un aspect ratio
-
-                // Nomi dei pulsanti personalizzati se vuoi
+                dayMaxEvents={true}
+                weekends={true}
+                dateClick={handleDateClick}   // Handler per il click su una data
+                eventClick={handleEventClick} // Handler per il click su un evento
+                // eventDrop={(info) => { /* Gestisci il drag & drop, chiama API per aggiornare */ }}
+                // eventResize={(info) => { /* Gestisci il resize, chiama API per aggiornare */ }}
+                height="100%"
                 buttonText={{
                     today:    'Oggi',
                     month:    'Mese',
@@ -111,17 +163,10 @@ const CalendarView: React.FC = () => {
                     day:      'Giorno',
                     list:     'Elenco'
                 }}
-                firstDay={1} // Imposta Lunedì come primo giorno della settimana (0=Dom, 1=Lun, ...)
-                navLinks={true} // Permette di cliccare sui nomi dei giorni/settimane per navigare
-                nowIndicator={true} // Mostra un indicatore per l'ora corrente nelle viste giornaliere/settimanali
+                firstDay={1}
+                navLinks={true}
+                nowIndicator={true}
             />
-            {/* {selectedDateInfo && (
-        <div>
-          <h3>Info Data Cliccata:</h3>
-          <p>Data: {selectedDateInfo.dateStr}</p>
-          <p>Tutto il giorno: {selectedDateInfo.allDay ? 'Sì' : 'No'}</p>
-        </div>
-      )} */}
         </div>
     );
 };

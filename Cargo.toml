@@ -21,3 +21,4 @@ rand = "0.8" # Utile con argon2 per generare il sale
 
 # Per gestire CORS (Cross-Origin Resource Sharing) durante lo sviluppo
 rocket_cors = "0.6.0-alpha3" # Controlla l'ultima versione compatibile con Rocket 0.5
+chrono-tz = "0.10.3"
