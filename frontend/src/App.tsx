@@ -5,7 +5,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import LoginPage from './components/LoginPage';
 import NotFoundPage from './components/NotFoundPage';
 import HomePage from "./components/HomePage.tsx"; // Importa la pagina 404
-// import CalendarPage from './components/CalendarPage'; // Esempio di altra pagina protetta
+import RegistrationPage from './components/RegistrationPage';
 
 // Funzione helper per verificare l'autenticazione
 const isAuthenticated = (): boolean => {
@@ -60,7 +60,12 @@ function App(): JSX.Element {
             </ProtectedRoute>
           }
         />
-        */}
+        */}{/* 2. AGGIUNGI LA ROUTE PER LA REGISTRAZIONE */}
+                {/* Questa route è pubblica; se un utente già loggato ci va, potrebbe essere reindirizzato */}
+                <Route
+                    path="/register"
+                    element={isAuthenticated() ? <Navigate to="/home" /> : <RegistrationPage />}
+                />
 
                 {/* 3. Route per la Radice ("/") */}
                 <Route

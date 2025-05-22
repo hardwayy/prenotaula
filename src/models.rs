@@ -1,4 +1,4 @@
-//models.rs 
+//models.rs
 
 use chrono::{ NaiveDateTime}; // Per gestire e formattare le date
 use rocket::serde::{Serialize};
@@ -17,7 +17,29 @@ pub struct PrenotazioneDb {
     pub Nome_Professore: Option<String>,
     pub Cognome_Professore: String,
 }
-
+// In models.rs o dove hai le struct per le risposte API
+#[derive(Serialize, FromRow, Debug)]
+#[serde(crate = "rocket::serde")]
+pub struct MateriaApi {
+    #[serde(rename = "idMateria")]
+    #[sqlx(rename = "Id_Materia")]
+    pub Id_Materia: i32, // Nota: Ho cambiato i nomi dei campi per coerenza con l'errore e SQLx
+    #[serde(rename = "nomeMateria")]
+    #[sqlx(rename = "Nome")]
+    pub Nome: String,
+    #[serde(rename = "descrizioneMateria")]
+    #[sqlx(rename = "Descrizione")]
+    pub Descrizione: Option<String>, 
+}
+#[derive(Deserialize, Debug)]
+#[serde(crate = "rocket::serde")]
+pub struct RegistrazioneProfessorePayload {
+    pub nome: String,
+    pub cognome: String,
+    pub email: String,
+    pub password: String,
+    pub materie_ids: Vec<i32>, // Corrisponde a ciò che invia il frontend
+}
 // Struct per la risposta API, che corrisponde a ciò che FullCalendar si aspetta
 #[derive(Serialize, Debug)]
 #[serde(crate = "rocket::serde")]

@@ -1,4 +1,6 @@
 mod models;
+mod auth_utils;
+
 #[macro_use]
 extern crate rocket;
 use rocket::fs::{FileServer, NamedFile};
@@ -286,6 +288,154 @@ async fn login_professore(
         user_name: nome_completo,
     }))
 }
+#[post("/auth/register", format = "json", data = "<payload>")]
+async fn register_professore(
+    db_pool: &State<MySqlPool>,
+    payload: Json<models::RegistrazioneProfessorePayload>,
+) -> Result<status::Custom<Json<JsonValue>>, status::Custom<Json<JsonValue>>> {
+
+    // --- Validazione Input Base ---
+    if payload.nome.trim().is_empty() ||
+        payload.cognome.trim().is_empty() ||
+        payload.email.trim().is_empty() ||
+        payload.password.is_empty() {
+        return Err(status::Custom(Status::BadRequest, Json(json!({
+            "status": "fallito", 
+            "message": "Nome, cognome, email e password sono obbligatori."
+        }))));
+    }
+    if payload.password.len() < 8 {
+        return Err(status::Custom(Status::BadRequest, Json(json!({
+            "status": "fallito", 
+            "message": "La password deve essere di almeno 8 caratteri."
+        }))));
+    }
+    if payload.materie_ids.is_empty() {
+        return Err(status::Custom(Status::BadRequest, Json(json!({
+            "status": "fallito", 
+            "message": "Seleziona almeno una materia insegnata."
+        }))));
+    }
+    // TODO: Aggiungere validazione più robusta per formato email.
+
+    // --- Inizio Transazione Database ---
+    let mut tx = match db_pool.begin().await {
+        Ok(transaction) => transaction,
+        Err(e) => {
+            eprintln!("Errore nell'iniziare la transazione DB per registrazione: {}", e);
+            return Err(status::Custom(Status::InternalServerError, Json(json!({"status": "errore", "message": "Errore del server (transazione)."}))));
+        }
+    };
+
+    // 1. Controlla se l'email esiste già nella tabella Credenziali
+    let email_exists: bool = match sqlx::query_scalar::<_, bool>( // Specifica il tipo di ritorno atteso
+                                                                  "SELECT EXISTS(SELECT 1 FROM Credenziali WHERE email = ?)"
+    )
+        .bind(&payload.email)
+        .fetch_one(&mut *tx) // Usa la transazione
+        .await
+    {
+        Ok(exists) => exists,
+        Err(e) => {
+            eprintln!("Errore DB nel controllare l'email esistente: {}", e);
+            let _ = tx.rollback().await; // Non dimenticare il rollback
+            return Err(status::Custom(Status::InternalServerError, Json(json!({"status": "errore", "message": "Errore del server durante la verifica email."}))));
+        }
+    };
+
+    if email_exists {
+        let _ = tx.rollback().await;
+        return Err(status::Custom(Status::Conflict, Json(json!({"status": "fallito", "message": "L'email fornita è già registrata."}))));
+    }
+
+    // 2. Hasha la password
+    let password_hash = match auth_utils::hash_password(&payload.password) {
+        Ok(hash) => hash,
+        Err(e) => {
+            eprintln!("Errore durante l'hashing della password: {}", e);
+            let _ = tx.rollback().await;
+            return Err(status::Custom(Status::InternalServerError, Json(json!({"status": "errore", "message": "Errore durante la preparazione della password."}))));
+        }
+    };
+
+    // 3. Inserisci nella tabella Professore
+    let nome_prof = payload.nome.trim();
+    let cognome_prof = payload.cognome.trim();
+    let insert_prof_result = sqlx::query!(
+        "INSERT INTO professore (Nome, Cognome) VALUES (?, ?)",
+        nome_prof, cognome_prof
+    )
+        .execute(&mut *tx) // Usa la transazione
+        .await;
+
+    let id_professore_inserito = match insert_prof_result {
+        Ok(result) => result.last_insert_id() as i32,
+        Err(e) => {
+            eprintln!("Errore DB nell'inserire il professore: {}", e);
+            let _ = tx.rollback().await;
+            return Err(status::Custom(Status::InternalServerError, Json(json!({"status": "errore", "message": "Errore durante la registrazione del professore."}))));
+        }
+    };
+
+    // 4. Inserisci nella tabella Credenziali
+    if let Err(e) = sqlx::query!(
+        "INSERT INTO credenziali (Id_Professore_Cred, email, password_hash) VALUES (?, ?, ?)",
+        id_professore_inserito, payload.email, password_hash
+    )
+        .execute(&mut *tx) // Usa la transazione
+        .await {
+        eprintln!("Errore DB nell'inserire le credenziali: {}", e);
+        let _ = tx.rollback().await;
+        return Err(status::Custom(Status::InternalServerError, Json(json!({"status": "errore", "message": "Errore durante la registrazione delle credenziali."}))));
+    }
+
+    // 5. Inserisci nella tabella Insegna
+    for id_materia in &payload.materie_ids {
+        if let Err(e) = sqlx::query!(
+            "INSERT INTO insegna (Id_Professore, Id_Materia) VALUES (?, ?)",
+            id_professore_inserito, id_materia
+        )
+            .execute(&mut *tx) // Usa la transazione
+            .await {
+            eprintln!("Errore DB nell'associare la materia {} al professore {}: {}", id_materia, id_professore_inserito, e);
+            let _ = tx.rollback().await;
+            return Err(status::Custom(Status::InternalServerError, Json(json!({"status": "errore", "message": "Errore durante l'associazione delle materie."}))));
+        }
+    }
+
+    // --- Commit della Transazione ---
+    if let Err(e) = tx.commit().await {
+        eprintln!("Errore nel fare commit della transazione DB: {}", e);
+        return Err(status::Custom(Status::InternalServerError, Json(json!({"status": "errore", "message": "Errore finale nella registrazione."}))));
+    }
+
+    Ok(status::Custom(Status::Created, Json(json!({ // HTTP 201 Created
+        "status": "successo",
+        "message": "Registrazione professore avvenuta con successo!",
+        "id_professore": id_professore_inserito
+    }))))
+}
+
+#[get("/materie")]
+async fn get_materie(
+    db_pool: &State<MySqlPool>
+) -> Result<Json<Vec<models::MateriaApi>>, Json<JsonValue>> { // <-- TIPO DI RITORNO ATTESO
+    match sqlx::query_as!(
+        models::MateriaApi,
+        "SELECT Id_Materia, Nome, Descrizione FROM materia ORDER BY Nome ASC"
+
+    )
+        .fetch_all(db_pool.inner())
+        .await
+    { // Inizio del blocco match
+        Ok(materie) => Ok(Json(materie)), // Questo braccio restituisce il tipo corretto
+        Err(e) => { // Inizio del braccio Err
+            eprintln!("Errore nel recuperare le materie dal DB: {}", e);
+            // QUI È IL PROBLEMA PROBABILE: questo blocco deve restituire un Err del tipo atteso
+            Err(Json(json!({ "status": "errore", "message": "Impossibile caricare l'elenco delle materie." }))) // Restituisce il tipo corretto
+        } // Fine del braccio Err
+    } // Fine del blocco match <-- Se questo match non copre tutti i casi o se un braccio non restituisce, il match potrebbe restituire ()
+}
 #[get("/<path..>", rank = 10)]
 async fn frontend_catch_all(path: PathBuf) -> Option<NamedFile> {
     println!("Catch-all (NamedFile) per path: {:?}", path);
@@ -310,6 +460,7 @@ async fn get_aule(
         }
     }
 }
+
 #[launch]
 async fn rocket() -> _ {
     match dotenvy::dotenv() {
@@ -373,9 +524,11 @@ async fn rocket() -> _ {
         .mount("/api", routes![
             hello_api, 
             login_professore,
+            register_professore,
             get_prenotazioni,
             creare_prenotazione,
-            get_aule
+            get_aule,
+            get_materie,
         ])
         .mount("/", FileServer::from("frontend/dist").rank(5)) 
         .mount("/", routes![frontend_catch_all])
