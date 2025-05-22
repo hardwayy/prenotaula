@@ -1,4 +1,4 @@
-// In main.rs o in un modulo dedicato (es. models.rs o DTOs.rs)
+//models.rs 
 
 use chrono::{ NaiveDateTime}; // Per gestire e formattare le date
 use rocket::serde::{Serialize};
@@ -10,8 +10,8 @@ use sqlx::FromRow;
 #[derive(sqlx::FromRow, Debug)] // FromRow per sqlx, Debug per la stampa
 pub struct PrenotazioneDb {
     pub Id_Prenotazione: i32,
-    pub Data_Inizio: NaiveDateTime,
-    pub Data_Fine:NaiveDateTime,
+    pub Data_Inizio: NaiveDateTime,   // <-- DEVE ESSERE NaiveDateTime
+    pub Data_Fine: NaiveDateTime,     // <-- DEVE ESSERE NaiveDateTime
     pub Tipo_Aula: String,
     pub Numero_Aula: i32,
     pub Nome_Professore: Option<String>,

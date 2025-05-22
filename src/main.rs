@@ -71,15 +71,6 @@ async fn creare_prenotazione(
         return Err(status::Custom(Status::BadRequest, Json(json!({"status": "fallito", "message": "Data_Fine deve essere successiva a Data_Inizio."}))));
     }
 
-    // TODO: Aggiungi qui la logica per controllare la disponibilità dell'aula
-    // (cioè, che non ci siano altre prenotazioni per quella Id_Aula in quell'intervallo di tempo)
-    // Questa query potrebbe essere:
-    // SELECT COUNT(*) FROM prenotazione
-    // WHERE Id_Aula = ? AND ((Data_Inizio < ? AND Data_Fine > ?) OR (Data_Inizio >= ? AND Data_Inizio < ?))
-    // Se count > 0, l'aula è occupata.
-
-    // Inserisci nel database
-    // SQLx convertirà DateTime<Utc> nel formato DATETIME corretto per MySQL
     match sqlx::query!(
         "INSERT INTO prenotazione (Id_Professore, Id_Aula, Data_Inizio, Data_Fine) VALUES (?, ?, ?, ?)",
         payload.id_professore,
@@ -119,18 +110,13 @@ async fn get_prenotazioni(
     db_pool: &State<MySqlPool>
 ) -> Result<Json<Vec<models::CalendarEventApi>>, Json<JsonValue>> {
 
-    // FullCalendar potrebbe inviare parametri start e end per filtrare la vista corrente.
-    // Per ora, recuperiamo tutte le prenotazioni.
-    // TODO: In futuro, potresti voler accettare parametri query ?start=...&end=...
-    //       per caricare solo gli eventi visibili nel range del calendario.
-
     let query_result = sqlx::query_as!(
         models::PrenotazioneDb, // La struct che mappa il risultato della query
         r#"
         SELECT
             p.Id_Prenotazione,
-            p.Data_Inizio,
-            p.Data_Fine,
+            p.Data_Inizio,      -- Verrà letto come NaiveDateTime
+            p.Data_Fine,        -- Verrà letto come NaiveDateTime
             a.Tipo_Aula,
             a.Numero AS Numero_Aula,
             pr.Nome AS Nome_Professore,
@@ -143,7 +129,6 @@ async fn get_prenotazioni(
             professore pr ON p.Id_Professore = pr.Id_Professore
         ORDER BY p.Data_Inizio ASC
         "#
-        // Se avessi parametri: , start_date_param, end_date_param
     )
         .fetch_all(db_pool.inner())
         .await;
@@ -153,20 +138,24 @@ async fn get_prenotazioni(
             let calendar_events: Vec<models::CalendarEventApi> = prenotazioni_db
                 .into_iter()
                 .map(|p_db| {
-                    // Costruisci il titolo dell'evento
-                    let nome_aula_completo = format!("Aula {} {:02}", p_db.Tipo_Aula, p_db.Numero_Aula); // Es. "Aula A 01"
+                    let nome_aula_completo = format!("Aula {} {:02}", p_db.Tipo_Aula, p_db.Numero_Aula);
                     let nome_prof_completo = format!("{} {}",
-                                                     p_db.Nome_Professore.as_deref().unwrap_or("N/D"), // Gestisce Nome NULL
+                                                     p_db.Nome_Professore.as_deref().unwrap_or("N/D"),
                                                      p_db.Cognome_Professore
                     );
+
+                    // **MODIFICA CRUCIALE QUI:**
+                    // Poiché Data_Inizio e Data_Fine dal DB sono NaiveDateTime ma rappresentano UTC,
+                    // li convertiamo in DateTime<Utc> specificando che sono già UTC.
                     let data_inizio_utc: DateTime<Utc> = DateTime::from_naive_utc_and_offset(p_db.Data_Inizio, Utc);
                     let data_fine_utc: DateTime<Utc> = DateTime::from_naive_utc_and_offset(p_db.Data_Fine, Utc);
+
                     models::CalendarEventApi {
                         id: p_db.Id_Prenotazione.to_string(),
                         title: format!("{} - {}", nome_aula_completo, nome_prof_completo),
-                        start:data_inizio_utc.to_rfc3339_opts(chrono::SecondsFormat::Secs, true), // Invia UTC con 'Z'
+                        start: data_inizio_utc.to_rfc3339_opts(chrono::SecondsFormat::Secs, true), // Invia UTC con 'Z'
                         end: data_fine_utc.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),   // Invia UTC con 'Z'
-                        allDay: false, // Assumiamo che le tue prenotazioni abbiano sempre un orario.
+                        allDay: false,
                     }
                 })
                 .collect();
