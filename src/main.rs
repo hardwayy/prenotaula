@@ -19,7 +19,11 @@ use argon2::{password_hash::{
     PasswordHash, PasswordVerifier // SaltString e PasswordHasher sarebbero per generare l'hash
 },};
 use jsonwebtoken::{encode, Header, EncodingKey}; // decode e DecodingKey sarebbero per verificare i token
-use chrono::{Utc, Duration, DateTime, TimeZone}; // Per gestire le date e le scadenze dei token
+use chrono::{Utc, Duration, DateTime, TimeZone};
+use rocket::http::Status;
+use rocket::response::status;
+
+// Per gestire le date e le scadenze dei token
 #[derive(serde::Serialize)]
 #[serde(crate = "rocket::serde")]
 struct ApiResponse {
@@ -31,25 +35,84 @@ fn hello_api() -> rocket::serde::json::Json<ApiResponse> {
         message: "Ciao dal backend Rocket!".to_string(),
     })
 }
-fn configure_cors() -> rocket_cors::Cors {
-    let allowed_origins = rocket_cors::AllowedOrigins::some_regex(&[
-        r"^http://localhost:[\d]+$",
-        r"^http://127.0.0.1:[\d]+$"
-    ]);
-    rocket_cors::CorsOptions {
-        allowed_origins,
-        allow_credentials: true,
-        ..Default::default()
-    }
-        .to_cors()
-        .expect("Errore nella creazione della configurazione CORS.")
-}
+
 
 #[derive(Debug, Deserialize)]
 #[serde(crate = "rocket::serde")]
 struct LoginCredentials<'r> {
     email: &'r str,
     password: &'r str,
+}
+#[post("/prenotazioni", format = "json", data = "<payload>")]
+async fn creare_prenotazione(
+    db_pool: &State<MySqlPool>,
+    payload: Json<models::NuovaPrenotazionePayload>,
+    // Qui dovresti avere anche un Request Guard per l'autenticazione
+    // per assicurarti che solo un professore loggato possa prenotare,
+    // e che payload.id_professore corrisponda all'ID nel token.
+    // auth_prof: AuthenticatedProfessor, // Esempio di request guard
+) -> Result<Json<JsonValue>, status::Custom<Json<JsonValue>>> { // status::Custom per errori HTTP specifici
+
+    // TODO: Validare che payload.id_professore corrisponda a auth_prof.id
+
+    // Parsa le stringhe data/ora ISO 8601 in DateTime<Utc>
+    // Il frontend invia stringhe ISO (es. da new Date().toISOString())
+    let data_inizio = match DateTime::parse_from_rfc3339(&payload.data_inizio) {
+        Ok(dt) => dt.with_timezone(&Utc),
+        Err(_) => return Err(status::Custom(Status::BadRequest, Json(json!({"status": "fallito", "message": "Formato Data_Inizio non valido."})))),
+    };
+    let data_fine = match DateTime::parse_from_rfc3339(&payload.data_fine) {
+        Ok(dt) => dt.with_timezone(&Utc),
+        Err(_) => return Err(status::Custom(Status::BadRequest, Json(json!({"status": "fallito", "message": "Formato Data_Fine non valido."})))),
+    };
+
+    // Validazione semplice
+    if data_fine <= data_inizio {
+        return Err(status::Custom(Status::BadRequest, Json(json!({"status": "fallito", "message": "Data_Fine deve essere successiva a Data_Inizio."}))));
+    }
+
+    // TODO: Aggiungi qui la logica per controllare la disponibilità dell'aula
+    // (cioè, che non ci siano altre prenotazioni per quella Id_Aula in quell'intervallo di tempo)
+    // Questa query potrebbe essere:
+    // SELECT COUNT(*) FROM prenotazione
+    // WHERE Id_Aula = ? AND ((Data_Inizio < ? AND Data_Fine > ?) OR (Data_Inizio >= ? AND Data_Inizio < ?))
+    // Se count > 0, l'aula è occupata.
+
+    // Inserisci nel database
+    // SQLx convertirà DateTime<Utc> nel formato DATETIME corretto per MySQL
+    match sqlx::query!(
+        "INSERT INTO prenotazione (Id_Professore, Id_Aula, Data_Inizio, Data_Fine) VALUES (?, ?, ?, ?)",
+        payload.id_professore,
+        payload.id_aula,
+        data_inizio, // Passa DateTime<Utc>
+        data_fine    // Passa DateTime<Utc>
+    )
+        .execute(db_pool.inner())
+        .await
+    {
+        Ok(result) => {
+            if result.rows_affected() == 1 {
+                let new_id = result.last_insert_id();
+                Ok(Json(json!({
+                    "status": "successo",
+                    "message": "Prenotazione creata con successo!",
+                    "id_prenotazione": new_id
+                })))
+            } else {
+                Err(status::Custom(Status::InternalServerError, Json(json!({"status": "errore", "message": "Impossibile creare la prenotazione."}))))
+            }
+        }
+        Err(e) => {
+            eprintln!("Errore DB durante la creazione della prenotazione: {}", e);
+            // Controlla errori specifici, es. violazione di vincoli
+            if let Some(db_err) = e.as_database_error() {
+                if db_err.is_unique_violation() { // Esempio
+                    return Err(status::Custom(Status::Conflict, Json(json!({"status": "fallito", "message": "Conflitto di prenotazione o dato duplicato."}))));
+                }
+            }
+            Err(status::Custom(Status::InternalServerError, Json(json!({"status": "errore", "message": "Errore interno del server durante la creazione."}))))
+        }
+    }
 }
 #[get("/prenotazioni")]
 async fn get_prenotazioni(
@@ -96,26 +159,14 @@ async fn get_prenotazioni(
                                                      p_db.Nome_Professore.as_deref().unwrap_or("N/D"), // Gestisce Nome NULL
                                                      p_db.Cognome_Professore
                     );
-                    let local_data_inizio = Rome.from_local_datetime(&p_db.Data_Inizio).unwrap();
-                    let local_data_fine = Rome.from_local_datetime(&p_db.Data_Fine).unwrap();
-                    // .unwrap() qui è per semplicità; in produzione dovresti gestire il caso ambiguo o non esistente.
-
-                    // PASSO 2: Converti l'orario locale in UTC
-                    let data_inizio_utc: DateTime<Utc> = local_data_inizio.with_timezone(&Utc);
-                    let data_fine_utc: DateTime<Utc> = local_data_fine.with_timezone(&Utc);
+                    let data_inizio_utc: DateTime<Utc> = DateTime::from_naive_utc_and_offset(p_db.Data_Inizio, Utc);
+                    let data_fine_utc: DateTime<Utc> = DateTime::from_naive_utc_and_offset(p_db.Data_Fine, Utc);
                     models::CalendarEventApi {
                         id: p_db.Id_Prenotazione.to_string(),
                         title: format!("{} - {}", nome_aula_completo, nome_prof_completo),
-                        // Formatta le date in stringhe ISO 8601
-                        // DateTime<Utc>.to_rfc3339() produce il formato corretto con 'Z' per UTC.
-                        // Se sqlx restituisce NaiveDateTime, converti prima a DateTime<Utc>.
-                        // Esempio se p_db.Data_Inizio è NaiveDateTime:
-                        start: data_inizio_utc.to_rfc3339_opts(chrono::SecondsFormat::Secs, true), // Invia UTC con 'Z'
+                        start:data_inizio_utc.to_rfc3339_opts(chrono::SecondsFormat::Secs, true), // Invia UTC con 'Z'
                         end: data_fine_utc.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),   // Invia UTC con 'Z'
-
                         allDay: false, // Assumiamo che le tue prenotazioni abbiano sempre un orario.
-                        // Potresti derivarlo se Data_Inizio e Data_Fine coprono un giorno intero
-                        // o se hai un campo specifico nel DB.
                     }
                 })
                 .collect();
@@ -249,6 +300,25 @@ async fn frontend_catch_all(path: PathBuf) -> Option<NamedFile> {
     // Assicurati che questo percorso sia corretto!
     NamedFile::open(Path::new("frontend/dist/index.html")).await.ok()
 }
+#[get("/aulas")]
+async fn get_aule(
+    db_pool: &State<MySqlPool>
+) -> Result<Json<Vec<models::AulaApi>>, Json<JsonValue>> { // Deve restituire Vec<AulaApi>
+    match sqlx::query_as!(
+        models::AulaApi, // Usa la struct definita sopra
+        "SELECT Id_Aula, Tipo_Aula, Numero FROM aula ORDER BY Tipo_Aula, Numero"
+        // Se hai aggiunto Nome_Aula: "SELECT Id_Aula, Tipo_Aula, Numero, Nome_Aula FROM aula ..."
+    )
+        .fetch_all(db_pool.inner())
+        .await
+    {
+        Ok(aule) => Ok(Json(aule)), // Restituisce direttamente il Vec<AulaApi>
+        Err(e) => {
+            eprintln!("Errore nel recuperare le aule dal DB: {}", e);
+            Err(Json(json!({ "status": "errore", "message": "Impossibile caricare l'elenco delle aule." })))
+        }
+    }
+}
 #[launch]
 async fn rocket() -> _ { // Aggiunto async perché MySqlPool::connect è async
     // 1. Definisci il tuo DATABASE_URL
@@ -319,7 +389,9 @@ async fn rocket() -> _ { // Aggiunto async perché MySqlPool::connect è async
         .mount("/api", routes![
             hello_api, // Assicurati che questa route sia definita
             login_professore, // E anche questa, e che ora possa usare &State<MySqlPool>
-            get_prenotazioni
+            get_prenotazioni,
+            creare_prenotazione,
+            get_aule
         ])
         .mount("/", FileServer::from("frontend/dist").rank(5)) // Assicurati che il percorso sia corretto
         .mount("/", routes![frontend_catch_all]) // Assicurati che questa route sia definita

@@ -76,6 +76,7 @@ const CalendarView: React.FC = () => {
     }, [fetchEvents]); // Chiama fetchEvents quando il componente monta (e se fetchEvents cambiasse)
 
     // Gestore per quando si clicca su una data o uno slot temporale
+    // @ts-ignore
     const handleDateClick = useCallback((clickInfo: DateClickArg) => {
         const title = prompt('Inserisci il titolo per la nuova prenotazione:', 'Nuova Prenotazione');
         if (title) {
@@ -107,6 +108,7 @@ Dovresti inviare questo al backend per salvarlo nel database.`);
     // Se chiami fetchEvents, allora includilo.
 
     // Gestore per quando si clicca su un evento esistente
+    // @ts-ignore
     const handleEventClick = useCallback((clickInfo: EventClickArg) => {
         const event = clickInfo.event;
         const eventDetails = `
@@ -151,8 +153,8 @@ Dovresti inviare una richiesta DELETE al backend per eliminarla dal database.`);
                 selectMirror={true}
                 dayMaxEvents={true}
                 weekends={true}
-                dateClick={handleDateClick}   // Handler per il click su una data
-                eventClick={handleEventClick} // Handler per il click su un evento
+                //dateClick={handleDateClick}
+                //eventClick={handleEventClick}
                 // eventDrop={(info) => { /* Gestisci il drag & drop, chiama API per aggiornare */ }}
                 // eventResize={(info) => { /* Gestisci il resize, chiama API per aggiornare */ }}
                 height="100%"
